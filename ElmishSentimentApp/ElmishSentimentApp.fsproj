@@ -50,6 +50,7 @@
     <Resource Include="Assets\good.png" />
     <Resource Include="Assets\ok.png" />
     <Resource Include="Assets\rage.png" />
+    <Resource Include="Assets\neutral.png" />
     <Compile Include="Converters\SentimentToImageSourceConverter.fs" />
     <Compile Include="Program.fs" />
     <None Include="App.config" />
