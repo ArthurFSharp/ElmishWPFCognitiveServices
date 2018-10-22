@@ -29,7 +29,7 @@ module SentimentService =
         let! json = Http.AsyncRequestString("https://westeurope.api.cognitive.microsoft.com/text/analytics/v2.0/sentiment", 
                                             httpMethod = "POST",
                                             headers = [ "Content-Type", "application/json; charset=utf-8";
-                                                "Ocp-Apim-Subscription-Key", "e8ade3208e2b47efb011d43aaa03b40c";
+                                                "Ocp-Apim-Subscription-Key", "Insert API key";
                                                 "Accept", "application/json" ], 
                                             body = TextRequest (JsonConvert.SerializeObject(documents)))
         return JsonConvert.DeserializeObject<SentimentResult>(json)
