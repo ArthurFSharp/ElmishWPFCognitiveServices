@@ -1,60 +1,151 @@
 ﻿// Copyright 2018 Fabulous contributors. See LICENSE.md for license.
 namespace FabulousWinML
 
-open System.Diagnostics
 open Fabulous.Core
 open Fabulous.DynamicViews
 open Xamarin.Forms
+open System.IO
+open System
+open System.Net.Http
+open System.Net.Http.Headers
+open Newtonsoft.Json
 
 module App = 
+    
+    let recognitionService = DependencyService.Get<FabulousWinML.Services.IRecognitionService>()
+    
     type Model = 
-      { Count : int
-        Step : int
-        TimerOn: bool }
+      { Predictions: Map<string, float>
+        Filestream: byte[] option
+        IsShark: bool option
+        IsOffline: bool }
 
     type Msg = 
-        | Increment 
-        | Decrement 
-        | Reset
-        | SetStep of int
-        | TimerToggled of bool
-        | TimedTick
+        | OpenFile
+        | FilePicked of byte[] option
+        | Recognize
+        | ModelRecognized of Map<string, float>
+        | SwitchConnectionStatus
 
-    let initModel = { Count = 0; Step = 1; TimerOn=false }
+    let initModel = { Predictions = Map.empty; Filestream = None; IsShark = None; IsOffline = false }
 
     let init () = initModel, Cmd.none
 
-    let timerCmd = 
-        async { do! Async.Sleep 200
-                return TimedTick }
-        |> Cmd.ofAsyncMsg
+    let toMap dictionary = 
+        (dictionary :> seq<_>)
+        |> Seq.map (|KeyValue|)
+        |> Map.ofSeq
+
+    let determineIsShark (predictions : Map<string, float>) =
+        match predictions.TryFind("shark") with
+        | Some shark ->
+            if shark > 0.75 then Some true else Some false
+        | None -> Some false
+
+    let getPrediction (predictions : Map<string, float>) =
+        match predictions.TryFind("shark") with
+        | Some shark -> shark
+        | None -> 0.
+        
+    let pickImageFileAsync () = async {
+        let! filename = recognitionService.OpenImage() |> Async.AwaitTask
+        return FilePicked filename
+    }
+    
+    type ImageTagPrediction = {
+        TagId: Guid
+        [<JsonProperty("TagName")>] Tag: string
+        Probability: float
+    }
+
+    type ImagePredictionResult = {
+        Id: Guid
+        Project: Guid
+        Iteration: Guid
+        Created: DateTime
+        Predictions: seq<ImageTagPrediction>
+    }
+
+    let recognizeAsync (stream : byte[]) (projectId : Guid) (iterationId : Guid option) = async {
+        let customVisionEndpoint = "https://southcentralus.api.cognitive.microsoft.com/customvision/v2.0/"
+        let httpClient = new HttpClient(BaseAddress = new Uri(customVisionEndpoint))
+        let iterationIdValue =
+            match iterationId with
+            | Some value -> value
+            | None       -> Guid.Empty
+        let endpoint = sprintf "Prediction/%A/image?iterationId=%A" projectId iterationIdValue
+        let request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        request.Headers.Add("Prediction-Key", "d8d5c69119fc41f5b24e43eeffd8f4c0")
+        let image = new MemoryStream(stream) :> Stream
+        request.Content <- new StreamContent(image)
+        request.Content.Headers.ContentType <- new MediaTypeHeaderValue("application/octet-stream")
+        let! response = httpClient.SendAsync(request) |> Async.AwaitTask
+        let! predictions = 
+            match response.IsSuccessStatusCode with
+            | true -> async {
+                        let! responseContentString = response.Content.ReadAsStringAsync() |> Async.AwaitTask
+                        return JsonConvert.DeserializeObject<ImagePredictionResult>(responseContentString)
+                     }
+            | false -> failwith response.ReasonPhrase
+        let q = query {
+            for p in predictions.Predictions do
+            select (p.Tag, p.Probability)
+        }
+        return q |> Map.ofSeq
+    }
+
+    let recognizeModelAsync (filename) (isOffline) = async {
+        let! predictions = async {
+            match filename with
+            | None -> return Map.empty
+            | Some stream -> 
+                if isOffline then
+                    let! predictions = recognitionService.Recognize(stream) |> Async.AwaitTask
+                    return (predictions |> toMap)
+                else
+                    let! predictions = (recognizeAsync stream (Guid.Parse("1323b843-ad67-402f-9331-3a197a6fc6da")) (Some(Guid.Parse("4691212e-83ad-49d2-a674-b07fa8163539"))))
+                    return (predictions |> toMap)
+        }
+        return ModelRecognized predictions
+    }
 
     let update msg model =
         match msg with
-        | Increment -> { model with Count = model.Count + model.Step }, Cmd.none
-        | Decrement -> { model with Count = model.Count - model.Step }, Cmd.none
-        | Reset -> init ()
-        | SetStep n -> { model with Step = n }, Cmd.none
-        | TimerToggled on -> { model with TimerOn = on }, (if on then timerCmd else Cmd.none)
-        | TimedTick -> 
-            if model.TimerOn then 
-                { model with Count = model.Count + model.Step }, timerCmd
-            else 
-                model, Cmd.none
+        | OpenFile -> model, Cmd.ofAsyncMsg (pickImageFileAsync())
+        | FilePicked filestream -> { model with Filestream = filestream }, Cmd.none
+        | Recognize -> model, Cmd.ofAsyncMsg (recognizeModelAsync(model.Filestream) model.IsOffline)
+        | ModelRecognized predictions -> { model with Predictions = predictions; IsShark = determineIsShark predictions }, Cmd.none
+        | SwitchConnectionStatus -> { model with IsOffline = not model.IsOffline }, Cmd.none
 
     let view (model: Model) dispatch =
-        View.ContentPage(
-          content = View.StackLayout(padding = 20.0, verticalOptions = LayoutOptions.Center,
-            children = [ 
-                View.Label(text = sprintf "%d" model.Count, horizontalOptions = LayoutOptions.Center, widthRequest=200.0, horizontalTextAlignment=TextAlignment.Center)
-                View.Button(text = "Increment", command = (fun () -> dispatch Increment), horizontalOptions = LayoutOptions.Center)
-                View.Button(text = "Decrement", command = (fun () -> dispatch Decrement), horizontalOptions = LayoutOptions.Center)
-                View.Label(text = "Timer", horizontalOptions = LayoutOptions.Center)
-                View.Switch(isToggled = model.TimerOn, toggled = (fun on -> dispatch (TimerToggled on.Value)), horizontalOptions = LayoutOptions.Center)
-                View.Slider(minimum = 0.0, maximum = 10.0, value = double model.Step, valueChanged = (fun args -> dispatch (SetStep (int (args.NewValue + 0.5)))), horizontalOptions = LayoutOptions.FillAndExpand)
-                View.Label(text = sprintf "Step size: %d" model.Step, horizontalOptions = LayoutOptions.Center) 
-                View.Button(text = "Reset", horizontalOptions = LayoutOptions.Center, command = (fun () -> dispatch Reset), canExecute = (model <> initModel))
-            ]))
+        View.NavigationPage(
+            barBackgroundColor = Styles.accentColor,
+            barTextColor = Styles.accentTextColor,
+            pages = 
+                [ View.ContentPage(
+                      title = "Fabulous WinML",
+                      content = View.StackLayout(padding = 20.0, verticalOptions = LayoutOptions.StartAndExpand,
+                        children = [ 
+                            yield View.StackLayout(orientation = StackOrientation.Horizontal, horizontalOptions = LayoutOptions.Center,
+                                children = [
+                                    View.Label(text = "Simulate offline mode", verticalOptions = LayoutOptions.Center)
+                                    View.Switch(isToggled = model.IsOffline, toggled=(fun args -> dispatch SwitchConnectionStatus))
+                            ])
+                            yield View.Button(text = "Open file", command = (fun () -> dispatch OpenFile))
+                            yield View.Button(text = "Recognize", command = (fun () -> dispatch Recognize), canExecute = (model.Filestream.IsSome))
+                            match model.IsShark with
+                            | Some value -> match value with
+                                            | false -> yield View.Label(text = "This is not a shark")
+                                            | true -> yield View.Label(text = sprintf "This is a shark (%s %%)" (((getPrediction model.Predictions) * 100.).ToString("#0.00")))
+                            | None -> yield View.Label(text = "")
+                            yield View.Image(source = match model.Filestream with
+                                                      | None -> ImageSource.FromStream(null)
+                                                      | Some stream -> ImageSource.FromStream(fun () -> new MemoryStream(stream) :> Stream))
+                        ]
+                      )
+                  )
+                ])
+        
 
     // Note, this declaration is needed if you enable LiveUpdate
     let program = Program.mkProgram init update view
@@ -68,44 +159,3 @@ type App () as app =
         |> Program.withConsoleTrace
 #endif
         |> Program.runWithDynamicView app
-
-#if DEBUG
-    // Uncomment this line to enable live update in debug mode. 
-    // See https://fsprojects.github.io/Fabulous/tools.html for further  instructions.
-    //
-    //do runner.EnableLiveUpdate()
-#endif    
-
-    // Uncomment this code to save the application state to app.Properties using Newtonsoft.Json
-    // See https://fsprojects.github.io/Fabulous/models.html for further  instructions.
-#if APPSAVE
-    let modelId = "model"
-    override __.OnSleep() = 
-
-        let json = Newtonsoft.Json.JsonConvert.SerializeObject(runner.CurrentModel)
-        Console.WriteLine("OnSleep: saving model into app.Properties, json = {0}", json)
-
-        app.Properties.[modelId] <- json
-
-    override __.OnResume() = 
-        Console.WriteLine "OnResume: checking for model in app.Properties"
-        try 
-            match app.Properties.TryGetValue modelId with
-            | true, (:? string as json) -> 
-
-                Console.WriteLine("OnResume: restoring model from app.Properties, json = {0}", json)
-                let model = Newtonsoft.Json.JsonConvert.DeserializeObject<App.Model>(json)
-
-                Console.WriteLine("OnResume: restoring model from app.Properties, model = {0}", (sprintf "%0A" model))
-                runner.SetCurrentModel (model, Cmd.none)
-
-            | _ -> ()
-        with ex -> 
-            App.program.onError("Error while restoring model found in app.Properties", ex)
-
-    override this.OnStart() = 
-        Console.WriteLine "OnStart: using same logic as OnResume()"
-        this.OnResume()
-#endif
-
-
