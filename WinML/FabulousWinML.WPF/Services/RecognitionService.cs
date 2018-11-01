@@ -33,7 +33,7 @@ namespace FabulousWinML.WPF.Services
             return FSharpOption<byte[]>.None;
         }
 
-        public async Task<IDictionary<string, double>> Recognize(byte[] stream)
+        public async Task<IDictionary<string, double>> OfflineClassifierRecognize(byte[] stream)
         {
             SoftwareBitmap softwareBitmap;
 

@@ -5,4 +5,4 @@ open System.Collections.Generic
 
 type IRecognitionService =
     abstract member OpenImage: unit -> Task<byte[] option>
-    abstract member Recognize: byte[] -> Task<IDictionary<string, float>>
+    abstract member OfflineClassifierRecognize: byte[] -> Task<IDictionary<string, float>>

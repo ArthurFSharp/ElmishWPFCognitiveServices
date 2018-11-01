@@ -5,13 +5,9 @@ open Fabulous.Core
 open Fabulous.DynamicViews
 open Xamarin.Forms
 open System.IO
-open System
-open System.Net.Http
-open System.Net.Http.Headers
-open Newtonsoft.Json
+open FabulousWinML.Services
 
 module App = 
-    
     let recognitionService = DependencyService.Get<FabulousWinML.Services.IRecognitionService>()
     
     type Model = 
@@ -30,20 +26,15 @@ module App =
     let initModel = { Predictions = Map.empty; Filestream = None; IsShark = None; IsOffline = false }
 
     let init () = initModel, Cmd.none
-
-    let toMap dictionary = 
-        (dictionary :> seq<_>)
-        |> Seq.map (|KeyValue|)
-        |> Map.ofSeq
-
-    let determineIsShark (predictions : Map<string, float>) =
-        match predictions.TryFind("shark") with
+    
+    let determineIsGoodPrediction (predictions : Map<string, float>) =
+        match predictions.TryFind(Config.predictionValue) with
         | Some shark ->
             if shark > 0.75 then Some true else Some false
         | None -> Some false
 
     let getPrediction (predictions : Map<string, float>) =
-        match predictions.TryFind("shark") with
+        match predictions.TryFind(Config.predictionValue) with
         | Some shark -> shark
         | None -> 0.
         
@@ -52,59 +43,17 @@ module App =
         return FilePicked filename
     }
     
-    type ImageTagPrediction = {
-        TagId: Guid
-        [<JsonProperty("TagName")>] Tag: string
-        Probability: float
-    }
-
-    type ImagePredictionResult = {
-        Id: Guid
-        Project: Guid
-        Iteration: Guid
-        Created: DateTime
-        Predictions: seq<ImageTagPrediction>
-    }
-
-    let recognizeAsync (stream : byte[]) (projectId : Guid) (iterationId : Guid option) = async {
-        let customVisionEndpoint = "https://southcentralus.api.cognitive.microsoft.com/customvision/v2.0/"
-        let httpClient = new HttpClient(BaseAddress = new Uri(customVisionEndpoint))
-        let iterationIdValue =
-            match iterationId with
-            | Some value -> value
-            | None       -> Guid.Empty
-        let endpoint = sprintf "Prediction/%A/image?iterationId=%A" projectId iterationIdValue
-        let request = new HttpRequestMessage(HttpMethod.Post, endpoint)
-        request.Headers.Add("Prediction-Key", "d8d5c69119fc41f5b24e43eeffd8f4c0")
-        let image = new MemoryStream(stream) :> Stream
-        request.Content <- new StreamContent(image)
-        request.Content.Headers.ContentType <- new MediaTypeHeaderValue("application/octet-stream")
-        let! response = httpClient.SendAsync(request) |> Async.AwaitTask
-        let! predictions = 
-            match response.IsSuccessStatusCode with
-            | true -> async {
-                        let! responseContentString = response.Content.ReadAsStringAsync() |> Async.AwaitTask
-                        return JsonConvert.DeserializeObject<ImagePredictionResult>(responseContentString)
-                     }
-            | false -> failwith response.ReasonPhrase
-        let q = query {
-            for p in predictions.Predictions do
-            select (p.Tag, p.Probability)
-        }
-        return q |> Map.ofSeq
-    }
-
     let recognizeModelAsync (filename) (isOffline) = async {
         let! predictions = async {
             match filename with
             | None -> return Map.empty
             | Some stream -> 
                 if isOffline then
-                    let! predictions = recognitionService.Recognize(stream) |> Async.AwaitTask
-                    return (predictions |> toMap)
+                    let! predictions = recognitionService.OfflineClassifierRecognize(stream) |> Async.AwaitTask
+                    return (predictions |> Utils.toMap)
                 else
-                    let! predictions = (recognizeAsync stream (Guid.Parse("1323b843-ad67-402f-9331-3a197a6fc6da")) (Some(Guid.Parse("4691212e-83ad-49d2-a674-b07fa8163539"))))
-                    return (predictions |> toMap)
+                    let! predictions = (OnlineClassifier.recognizeAsync stream Config.projectId Config.iterationId)
+                    return (predictions |> Utils.toMap)
         }
         return ModelRecognized predictions
     }
@@ -113,8 +62,8 @@ module App =
         match msg with
         | OpenFile -> model, Cmd.ofAsyncMsg (pickImageFileAsync())
         | FilePicked filestream -> { model with Filestream = filestream }, Cmd.none
-        | Recognize -> model, Cmd.ofAsyncMsg (recognizeModelAsync(model.Filestream) model.IsOffline)
-        | ModelRecognized predictions -> { model with Predictions = predictions; IsShark = determineIsShark predictions }, Cmd.none
+        | Recognize -> { model with IsShark = None }, Cmd.ofAsyncMsg (recognizeModelAsync(model.Filestream) model.IsOffline)
+        | ModelRecognized predictions -> { model with Predictions = predictions; IsShark = determineIsGoodPrediction predictions }, Cmd.none
         | SwitchConnectionStatus -> { model with IsOffline = not model.IsOffline }, Cmd.none
 
     let view (model: Model) dispatch =

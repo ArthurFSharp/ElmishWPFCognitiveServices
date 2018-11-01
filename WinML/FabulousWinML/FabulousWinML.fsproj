@@ -6,8 +6,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Config.fs" />
+    <Compile Include="Services\OnlineClassifier.fs" />
     <Compile Include="Services\IRecognitionService.fs" />
     <Compile Include="Styles.fs" />
+    <Compile Include="Utils.fs" />
     <Compile Include="FabulousWinML.fs" />
   </ItemGroup>
   <ItemGroup>
