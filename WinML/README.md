@@ -10,7 +10,7 @@ The purpose of this sample was to use Fabulous to build UI in F# for Windows, an
 - How to extend desktop app (WPF) with Universal Windows Platform
 
 FabulousWinML can run both on UWP and Desktop WPF in Windows 10 1803 and higher!  
-<img alt='UWP' src='images/capture_uwp.PNG' width='740' height='752' /> <img src='images/capture_wpf.png' width='714' height='916' />
+<img alt='UWP' src='images/capture_uwp.PNG' width='440' height='452' /> <img src='images/capture_wpf.png' width='414' height='616' />
 
 ## Running the sample
 If you want to build and run your own version of Fabulous WinML, you will need to get some keys for [Azure Custom Vision](https://customvision.ai/).
@@ -21,7 +21,7 @@ Follow the instructions here:
  4. Under Solutions Explorer/ Assets Folder add model file to project by selecting Add Existing Item.
  5. Change properties of model just added: "Build Action" -> "Content" and "Copy to Output Directory" -> "Copy if newer"
 
-For running the WPF sample, since we are using UWP apis for access ONNX model recognition, you have to add the followinf references:
+For running the WPF sample, since we are using UWP apis for access ONNX model recognition, you have to add the following references:
 
 <img alt='UWP' src='images/references.PNG' />
 
